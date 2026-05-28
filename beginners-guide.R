@@ -16,6 +16,9 @@ library(tidySummarizedExperiment)
 data(airway)
 airway
 
+library(tidyprint)
+airway |> print()
+
 # Tidy approach: mean counts per gene across treated samples
 airway |>
   filter(dex == "trt") |>
@@ -77,12 +80,26 @@ peaks
 
 # Build promoter windows from UCSC knownGene (GRCh38), standard chromosomes only
 txdb <- TxDb.Hsapiens.UCSC.hg38.knownGene
-promoters_gr <- genes(txdb) |>
-  keepStandardChromosomes(pruning.mode = "coarse") |>
-  promoters(upstream = 2000, downstream = 200)
+g <- genes(txdb) |>
+  keepStandardChromosomes(pruning.mode = "coarse")
+
+promoters_gr <- g |> promoters(upstream = 2000, downstream = 0)
+
+# We could also perform this via plyranges
+promoters_gr2 <- g |> 
+  anchor_5p() |>
+  mutate(width=1) |>
+  flank_upstream(width=2000) 
+
+all.equal(promoters_gr, promoters_gr2)
+
+library(DFplyr)
 
 # Tidy plyranges: count ATAC peaks per gene promoter
 peaks |>
   join_overlap_inner(promoters_gr) |>
   group_by(gene_id) |>
-  summarize(n_peaks = n())
+  summarize(n_peaks = n()) |>
+  pull(n_peaks) |>
+  table()
+
