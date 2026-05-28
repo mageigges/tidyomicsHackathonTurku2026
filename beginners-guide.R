@@ -64,35 +64,7 @@ filt |>
   theme_bw()
 
 # ============================================================
-# 3. tidySingleCellExperiment — single-cell RNA-seq (PBMC 3k)
-# ============================================================
-
-library(TENxPBMCData)
-library(scater)
-library(tidySingleCellExperiment)
-library(ggplot2)
-
-pbmc <- TENxPBMCData("pbmc3k")
-
-# QC, normalise, reduce dimensions
-pbmc <- addPerCellQCMetrics(pbmc)
-pbmc <- pbmc[, pbmc$sum > 500 & pbmc$detected > 200]
-pbmc <- logNormCounts(pbmc)
-pbmc <- runPCA(pbmc)
-pbmc <- runUMAP(pbmc, dimred = "PCA")
-
-# Tidy filtering and visualisation
-pbmc |>
-  filter(sum > 2000) |>
-  ggplot(aes(UMAP1, UMAP2, color = log10(sum))) +
-  geom_point(size = 0.5) +
-  scale_color_viridis_c() +
-  theme_bw() +
-  labs(color = "log10(UMI)")
-
-
-# ============================================================
-# 4. plyranges — ATAC-seq peaks overlapping promoters
+# 3. plyranges — ATAC-seq peaks overlapping promoters
 #    Data: fluentGenomics workflow package
 # ============================================================
 
@@ -113,8 +85,12 @@ peaks_gr <- peaks_df |>
 peaks_gr
 
 # Build promoter windows from UCSC knownGene (GRCh38)
-txdb        <- TxDb.Hsapiens.UCSC.hg38.knownGene
-promoters_gr <- promoters(genes(txdb), upstream = 2000, downstream = 200)
+txdb <- TxDb.Hsapiens.UCSC.hg38.knownGene
+promoters_gr <- promoters(
+  transcripts(txdb), 
+  upstream = 2000, 
+  downstream = 200
+)
 
 # Tidy plyranges: count ATAC peaks per gene promoter
 peaks_gr |>
