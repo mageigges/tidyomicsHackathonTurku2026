@@ -43,9 +43,7 @@ filt <- airway |>
   scale_abundance(method = "RLE")
 
 de_airway <- filt |>
-  identify_abundant(factor_of_interest = dex) |>
-  scale_abundance(method = "RLE") |>
-  test_differential_abundance(method = "DESeq2", .formula=~cell + dex)
+  test_differential_abundance(method = "DESeq2", .formula = ~cell + dex)
 
 de_airway |>
   filter(padj < .01) |>
@@ -86,11 +84,7 @@ peaks_gr
 
 # Build promoter windows from UCSC knownGene (GRCh38)
 txdb <- TxDb.Hsapiens.UCSC.hg38.knownGene
-promoters_gr <- promoters(
-  transcripts(txdb), 
-  upstream = 2000, 
-  downstream = 200
-)
+promoters_gr <- promoters(genes(txdb), upstream = 2000, downstream = 200)
 
 # Tidy plyranges: count ATAC peaks per gene promoter
 peaks_gr |>
