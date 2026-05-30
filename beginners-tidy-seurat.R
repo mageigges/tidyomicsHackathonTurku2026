@@ -1,4 +1,4 @@
-## Tidyomics Beginner's Guide — tidySeurat -- May 2026
+## Tidyomics Beginner's Guide — tidyseurat -- May 2026
 ## Single-cell RNA-seq: tidy interface over Seurat objects
 ## Data: pbmc_small (bundled with Seurat) — 80 PBMCs, two sample groups
 
@@ -22,7 +22,7 @@ seurat_obj <- pbmc_small
 # 1. Tidy inspection
 # ============================================================
 
-# tidySeurat: Seurat objects print and behave like tibbles
+# tidyseurat: Seurat objects print and behave like tibbles
 seurat_obj
 
 # Select metadata columns of interest
@@ -86,7 +86,7 @@ seurat_filtered |>
     mean_counts = mean(nCount_RNA)
   )
 
-# Tidy ggplot2: tidySeurat exposes UMAP_1, UMAP_2 directly in aes()
+# Tidy ggplot2: tidyseurat exposes umap_1, umap_2 directly in aes()
 seurat_filtered |>
   ggplot(aes(umap_1, umap_2, color = groups)) +
   geom_point(size = 1.5, alpha = 0.7) +
