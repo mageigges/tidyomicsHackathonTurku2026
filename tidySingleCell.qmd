@@ -1,0 +1,159 @@
+---
+title: "Single Cell Analysis but tidy"
+format: html
+author: "Carissa Chen, University of Padova, Italy"
+output:
+  BiocStyle::html_document:
+    toc: true
+    toc_float: true
+    toc_depth: 3
+vignette: >
+  %\VignetteEngine{quarto::html}
+  %\VignetteIndexEntry{tidy Single Cell Analysis}
+  %\VignetteEncoding{UTF-8}
+bibliography: references.bib
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, cache = FALSE)
+```
+
+## Introduction to tidySingleCellExperiment
+
+The [tidySingleCellExperiment](https://github.com/tidyomics/tidySingleCellExperiment) package is part of the wider *tidyomics* ecosystem, which enables a tidy data analysis framework for omics data. Specifically with this package, we are able to use familiar tidyverse verbs (select, filter, mutate, etc.) and ggplot functionalities to fluidly manipulate a SingleCellExperiment object to perform standard analysis workflows and visualise various outputs. The single-cell-focused packages *tidyseurat* and *tidySingleCellExperiment* prioritise the colData (cells) in their operations. We can add gene-level data to the output, but by default the dplyr verbs will operate on the cells (columns).
+
+In this vignette, we will demonstrate the utility of tidy functions to perform basic single-cell analysis following *Orchestrating Single Cell Analysis* (OSCA) (@oscareference) and additional cell phenotyping tasks such as trajectory analysis and cell-cell communication. It is intended for users who already have some familiarity with R and/or tidyverse and fundamental understanding of insights that can be gained from single-cell transcriptomics, but wish to perform single-cell analyses in the tidy language. While basic principles will be explained, for more thorough and comprehensive discourse, please visit the [OSCA book](https://bioconductor.org/books/3.23/OSCA/).
+
+## Installation
+
+```{r}
+# if not already installed
+# if (!require("BiocManager", quietly = TRUE))
+#     install.packages("BiocManager")
+
+BiocManager::install("tidyomics")
+```
+
+## Load packages
+
+```{r}
+library(janitor)
+
+# library(ggplot2)
+
+# library(scater)
+# library(scran)
+# library(scrapper)
+
+# library(Seurat)
+# library(parallel)
+# library(BiocParallel)
+# library(reshape2)
+# library(scDblFinder)
+# library(DropletUtils)
+```
+
+## Dataset
+
+For this tutorial, we will use a mouse scRNA-seq data profiling the hippocampus from Hochgerner et al. [@Hochgerner](http://doi.org/10.1038/s41593-017-0056-2). We will retrieve the original dataset from GEO with the accession number GSE104323. It contains 8 timepoints from E16.5 to postnatal 132 days, and 24 unique cell types.
+
+```{r}
+url <- file.path("https://ftp.ncbi.nlm.nih.gov/geo/series/GSE104nnn/GSE104323/suppl/GSE104323%5F10X%5Fexpression%5Fdata%5FV2%2Etab%2Egz")
+
+tab <- tempfile(fileext = ".tab.gz")
+download.file(url, tab, quiet = TRUE)
+# retrieve expression matrix
+expr_mat <- read.delim(gzfile(tab), row.names = 1, check.names = FALSE)
+
+url <- file.path("https://ftp.ncbi.nlm.nih.gov/geo/series/GSE104nnn/GSE104323/suppl/GSE104323%5Fmetadata%5Fbarcodes%5F24185cells%2Etxt%2Egz")
+
+txt <- tempfile(fileext = ".txt.gz")
+download.file(url, txt, quiet = TRUE)
+# retrieve metadata
+meta <- read.delim(gzfile(txt), sep="\t")
+```
+
+The SingleCellExperiment class (from the *SingleCellExperiment* package) serves as the common currency for data exchange across the many single-cell-related Bioconductor packages. This class implements a data structure that stores all aspects of our single-cell data - gene-by-cell expression data, per-cell metadata and per-gene annotation so we can manipulate them in a synchronized and convenient manner.
+
+Here, we will create a SingleCellExperiment (SCE) object from the raw data.
+
+```{r}
+# clean column names
+colnames(meta) <- janitor::make_clean_names(colnames(meta))
+# subset for common cell names
+meta <- meta[meta$sample_name_24185_single_cells %in% colnames(expr_mat), ]
+  
+sce <- SingleCellExperiment(assays=list(counts=expr_mat), colData=meta)
+# print the sce object
+sce
+```
+
+Now, by loading the `tidySingleCellExperiment` package, the tidyverse commands are registered for the `SingleCellExperiment` class so we can view and manipulate the object as a tidyverse-compatible tibble without modifying the underlying object.
+
+If we load the `tidySingleCellExperiment` package and then view the SCE object, it now displays as a tibble.
+
+```{r}
+library(tidySingleCellExperiment)
+sce
+```
+
+To switch between the default `SingleCellExperiment` and the tidyverse-compatible tibble representation, we set the `restore_SingleCellExperiment_show` option.
+```{r}
+# standard representation
+options("restore_SingleCellExperiment_show" = TRUE)
+sce
+
+# tidy representation
+options("restore_SingleCellExperiment_show" = FALSE)
+sce
+```
+
+## Quality Control
+
+Low-quality scRNA-seq libraries can result from cell damage or failed library preparation and are typically characterized by low total counts, few detected genes, and high mitochondrial/spike-in content.
+
+They can cause several problems in downstream analyses:
+
+Artificial clustering: Low-quality cells may form separate clusters or falsely connect distinct cell types, creating misleading intermediate states or trajectories.
+Distorted variability and dimensionality reduction: Quality differences can dominate variance estimates and principal components, obscuring true biological signals.
+False differential expression: Normalization of very small libraries can exaggerate expression of contaminating or ambient transcripts, making genes appear falsely upregulated.
+
+Adequately filtering the data to retain good quality cells, while minimising technical artifacts is important to ensure the accuracy and reliability of downstream analyses. 
+
+
+scRNA-seq data is often plagued by various sources of noise and technical artifacts, such as low quality cells (eg. cells with high rates of cell death), doublets, and ambient RNA contamination. 
+
+
+
+Typical procedures for scRNA-seq filtering include the removal of cells with low or excessively high library sizes, cells with a high proportion of mitochondrial gene expression (indicative of high cell death) and removal of doublet cells (ie. when two cells are encapsulated into one droplet). These steps help to retain high-quality data that accurately reflects the true biological state of the sampled cells, thereby enabling more robust and meaningful insights from the scRNA-seq experiment.
+
+```{r}
+library(scRNAseq)
+sce.z <- ZeiselBrainData()
+sce.z
+
+library(scrapper)
+is.mito <- grep("^mt-", rownames(sce.z))
+results <- analyze.se(
+    sce.z,
+    rna.qc.subsets=list(Mito=is.mito),
+    num.threads=2 # limit number of threads to keep R CMD check happy.
+)
+```
+
+## Session information
+```{r}
+sessionInfo()
+```
+
+## References
+
+## Citation
+If you use tidySingleCellExperiment in published research, please consider citing:
+```{r}
+citation(package = "tidyomics")
+citation(package = "SingleCellExperiment")
+```
+
+# Use of AI
+In the preparation of this vignette, ChatGPT was used to assist with summarizing concepts presented in OSCA. All writing was reviewed and fact-checked against the original source material before publication.
