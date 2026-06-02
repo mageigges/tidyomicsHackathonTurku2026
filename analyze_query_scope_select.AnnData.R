@@ -177,7 +177,7 @@ analyze_query_scope_select.AnnData <- function(ad, ...) {
       dplyr::filter(.data$domain == "layer") |>
       dplyr::pull(.data$key),
     
-    analysis_method = "select",
+    analysis_method = "select_columns",
     
     confidence = "high"
   )
