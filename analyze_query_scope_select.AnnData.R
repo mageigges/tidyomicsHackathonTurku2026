@@ -177,7 +177,7 @@ analyze_query_scope_select.AnnData <- function(ad, ...) {
       dplyr::filter(.data$domain == "layer") |>
       dplyr::pull(.data$key),
     
-    analysis_method = "registry",
+    analysis_method = "select",
     
     confidence = "high"
   )
