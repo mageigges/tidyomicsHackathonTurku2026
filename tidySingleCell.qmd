@@ -1,0 +1,258 @@
+---
+title: "Single cell analysis but tidy"
+format: html
+author: "Carissa Chen, University of Padova, Italy"
+output:
+  BiocStyle::html_document:
+    toc_float: true 
+vignette: >
+  %\VignetteEngine{quarto::html}
+  %\VignetteIndexEntry{tidy Single-Cell Analysis}
+  %\VignetteEncoding{UTF-8}
+bibliography: references.bib
+---
+
+```{r style, echo = FALSE, results = 'asis', message=FALSE}
+BiocStyle::markdown()
+```
+
+**Last modified:** `r file.info("tidySingleCell.qmd")$mtime`<br />
+**Compiled**: `r date()`
+
+## Introduction to tidySingleCellExperiment
+
+The [tidySingleCellExperiment](https://github.com/tidyomics/tidySingleCellExperiment) package is part of the wider *tidyomics* ecosystem, which enables a tidy data analysis framework for omics data. Specifically with this package, we are able to use familiar tidyverse verbs (select, filter, mutate, etc.) and ggplot functionalities to fluidly manipulate a SingleCellExperiment object to perform standard analysis workflows and visualise various outputs. The single-cell-focused packages *tidyseurat* and *tidySingleCellExperiment* prioritise the colData (cells) in their operations. We can add gene-level data to the output, but by default the dplyr verbs will operate on the cells (columns).
+
+In this vignette, we will demonstrate the utility of tidy functions to perform basic single-cell analysis following *Orchestrating Single Cell Analysis* (OSCA)(@oscareference) and additional cell phenotyping tasks such as trajectory analysis and cell-cell communication. It is intended for users who already have some familiarity with R and/or tidyverse and fundamental understanding of insights that can be gained from single-cell transcriptomics, but wish to perform single-cell analyses in the tidy language. While basic principles will be explained, for more thorough and comprehensive discourse, please visit the [OSCA book](https://bioconductor.org/books/3.23/OSCA/).
+
+## Installation
+
+```{r}
+# if not already installed
+# if (!require("BiocManager", quietly = TRUE))
+#     install.packages("BiocManager")
+
+BiocManager::install("tidyomics")
+```
+
+## Load packages
+
+```{r}
+library(janitor)
+library(SingleCellExperiment)
+
+library(patchwork)
+library(ggplot2)
+library(RColorBrewer)
+
+# library(scater)
+# library(scran)
+# library(scrapper)
+
+# library(Seurat)
+# library(parallel)
+# library(BiocParallel)
+# library(reshape2)
+# library(scDblFinder)
+# library(DropletUtils)
+```
+
+## Dataset
+
+For this tutorial, we will use a mouse scRNA-seq data profiling the hippocampus from Hochgerner et al. [@Hochgerner](http://doi.org/10.1038/s41593-017-0056-2). We will retrieve the original dataset from GEO with the accession number GSE104323. It contains 8 timepoints from E16.5 to postnatal 132 days, and 24 unique cell types.
+
+```{r}
+url <- file.path("https://ftp.ncbi.nlm.nih.gov/geo/series/GSE104nnn/GSE104323/suppl/GSE104323%5F10X%5Fexpression%5Fdata%5FV2%2Etab%2Egz")
+
+tab <- tempfile(fileext = ".tab.gz")
+download.file(url, tab, quiet = TRUE)
+# retrieve expression matrix
+expr_mat <- read.delim(gzfile(tab), row.names = 1, check.names = FALSE)
+
+url <- file.path("https://ftp.ncbi.nlm.nih.gov/geo/series/GSE104nnn/GSE104323/suppl/GSE104323%5Fmetadata%5Fbarcodes%5F24185cells%2Etxt%2Egz")
+
+txt <- tempfile(fileext = ".txt.gz")
+download.file(url, txt, quiet = TRUE)
+# retrieve metadata
+meta <- read.delim(gzfile(txt), sep="\t")
+```
+
+The SingleCellExperiment class (from the `SingleCellExperiment` package) serves as the common currency for data exchange across the many single-cell-related Bioconductor packages. This class implements a data structure that stores all aspects of our single-cell data - gene-by-cell expression data, per-cell metadata and per-gene annotation so we can manipulate them in a synchronized and convenient manner.
+
+Here, we will create a SingleCellExperiment (SCE) object from the raw data.
+
+```{r}
+# clean column names and subset for common cell names
+meta <- meta |>
+  dplyr::rename_with(janitor::make_clean_names) |>
+  dplyr::filter(sample_name_24185_single_cells %in% colnames(expr_mat))
+  
+sce <- SingleCellExperiment(assays=list(counts=expr_mat), colData=meta)
+# print the sce object
+sce
+```
+
+Now, by loading the `tidySingleCellExperiment` package, the tidyverse commands are registered for the `SingleCellExperiment` class so we can view and manipulate the object as a tidyverse-compatible tibble without modifying the underlying object.
+
+If we load the `tidySingleCellExperiment` package and then view the SCE object, it now displays as a tibble.
+
+```{r}
+library(tidySingleCellExperiment)
+sce
+```
+
+To switch between the default `SingleCellExperiment` and the tidyverse-compatible tibble representation, we set the `restore_SingleCellExperiment_show` option.
+
+```{r}
+# standard representation
+options("restore_SingleCellExperiment_show" = TRUE)
+sce
+
+# tidy representation
+options("restore_SingleCellExperiment_show" = FALSE)
+sce
+```
+
+and we can still interact with the tibble abstraction using regular SCE commands such as:
+
+```{r}
+assays(sce)
+colData(sce)
+```
+
+## Cleaning the colData with basic tidyomics functions
+
+We will demonstrate how to explore and wrangle the metadata using typical tidyverse functions.
+
+For example, we can use `filter` to see just the rows for the cells belonging to post-natal 120 days (P120).
+
+```{r}
+sce |> filter(characteristics_age == "P120")
+```
+
+We can also use the `slice_*` helpers to view a subset of cells,
+
+```{r}
+sce |>
+  group_by(characteristics_cell_cluster) |>
+  slice_sample(n=5)
+```
+
+Or `select` to view specific columns such as `characteristics_cell_cluster`, `characteristics_strain` and `characteristics_sex_of_pooled_animals`.
+
+```{r}
+sce |> select(.cell, characteristics_cell_cluster, characteristics_strain, characteristics_sex_of_pooled_animals)
+```
+
+We may also want to refine an annotation column. We will create a new column describing whether the timepoint is embryonic or postnatal by extracting the age and grouping according to P (post-natal) or E (embryonic).
+
+```{r}
+sce <- sce |>
+  # extract age
+  extract(characteristics_age, "characteristics_stage", "^(P|E)", remove = FALSE)
+
+# we can also reorder them so it's the first column
+sce |> select(.cell, characteristics_stage, everything())
+```
+
+And we could use `unite` to combine columns, for example to create a new column called `sample_id` combining the strain and age of the mice.
+
+```{r}
+sce <- sce |> unite("sample_id", characteristics_strain, characteristics_age, remove = FALSE)
+```
+
+## Quality Control
+
+Low-quality scRNA-seq libraries can result from cell damage or failed library preparation and are typically characterized by low total counts, few detected genes, and high mitochondrial/spike-in content.
+
+They can cause several problems in downstream analyses:
+
+* Clustering artifacts: Low-quality cells may form separate clusters or falsely connect distinct cell types, creating misleading intermediate states or trajectories.
+* Distorted variability and dimensionality reduction: Quality differences can dominate variance estimates and principal components, obscuring true biological signals.
+* Inaccurate differential expression: Normalization of very small libraries can exaggerate expression of contaminating or ambient transcripts, making genes appear falsely down or upregulated.
+
+Adequately filtering the data to retain good quality cells, while minimising technical artifacts is important to ensure the accuracy and reliability of downstream analyses and correct biological interpretation. 
+
+Here, we will mainly use the `scrapper` package to perform the basic pre-processing and initial single-cell analysis steps. `scrapper` implements bindings to C++ code for analyzing single-cell data, mostly from the `libscran` libraries to optimize code execution. This presents a modular way to perform computationally-intensive steps in the single-cell analysis workflow, ranging from quality control to clustering and marker detection.
+
+### Identifying low-quality cells
+
+Common single-cell RNA-seq QC metrics are used to identify low-quality cells. These include:
+
+* library size (total counts per cell): low values suggest RNA loss
+* number of detected genes: low values indicate poor transcript capture
+* proportion of mitochondrial reads: high values are associated with damaged cells or RNA degradation
+
+A simple QC strategy is to apply fixed thresholds to the QC metrics and flag cells that fall outside acceptable ranges. In cases where we assume that most cells are of good quality, we then identify cells that are outliers for the various QC metrics, based on the median absolute deviation (MAD) from the median value of each metric across all cells. 
+
+Decisions on thresholds are dataset-dependent and in some cases, you may want to set custom thresholds to avoid removing rare cell populations or to capture cell types which may have specific characteristics. A study by [@Orsorio](https://doi.org/10.1093/bioinformatics/btaa751) have performed a systematic evaluation of mitochondrial proportion in human and mice tissues which could serve as a guide to decide the appropriate mitochondrial threshold depending on your data.
+
+We will compute the QC metrics using `scrapper::quickRnaQc.se`, which reports total counts (sum), detected genes (detected) and mitochondrial read percentage (subset.proportion.mito) while blocking on the mouse strain. For the purposes of demonstration, we will use the default adaptive filtering approach by `scrapper` to identify outliers.
+
+```{r}
+library(scrapper)
+is.mito <- grep("^mt-", rownames(sce))
+
+# compute per-cell QC metrics
+sce <- sce |>
+  quickRnaQc.se(subsets = list(mito = is.mito),
+  block = sce$characteristics_strain)
+```
+
+To visualise the QC metrics that have been generated, we can treat the `sce` as a tibble for plotting.
+
+```{r}
+p1 <- sce |>
+  ggplot(aes(x=characteristics_strain, y=sum, fill=keep)) +
+  scale_fill_brewer(palette="Dark2") +
+  geom_violin() +
+  scale_y_log10() +
+  ggtitle("Total count") +
+  theme_minimal()
+
+p2 <- sce |>
+  ggplot(aes(x=characteristics_strain, y=detected, fill=keep)) +
+  scale_fill_brewer(palette="Dark2") +
+  geom_violin() +
+  scale_y_log10() +
+  ggtitle("Detected features") +
+  theme_minimal()
+
+p3 <- sce |>
+  ggplot(aes(x=characteristics_strain, y=subset.proportion.mito, fill=keep)) +
+  scale_fill_brewer(palette="Dark2") +
+  geom_violin() +
+  scale_y_log10() +
+  ggtitle("Mito percent") +
+  theme_minimal()
+
+p1 + p2 + p3
+```
+
+## Extension
+
+### Integration with `plotly`
+
+## Session information
+```{r}
+sessionInfo()
+```
+
+## References
+
+## Citation
+
+If you use tidySingleCellExperiment in published research, please consider citing:
+
+```{r}
+citation(package = "tidyomics")
+citation(package = "SingleCellExperiment")
+```
+
+## Acknowledgements
+
+This vignette draws material from several sources: previously-run workshops,[tidyomics Bioconductor workshops](https://tidyomics.github.io/tidyomicsWorkshopBioc2023/articles/tidyGenomicsTranscriptomics.html) and [Advanced Phenotyping workshop](https://sydneybiox.github.io/scdneyAdvancedPhenotyping/articles/advanced_phenotyping.html) by SydneyBioX, and the [tidySingleCellExperiment vignette](https://bioconductor.org/packages//release/bioc/vignettes/tidySingleCellExperiment/inst/doc/introduction.html), as well as the [OSCA book](https://bioconductor.org/books/3.23/OSCA/).
+
+## Use of AI declaration
+
+In the preparation of this vignette, ChatGPT was used to assist with summarising concepts presented in OSCA. All writing was reviewed and fact-checked against the original source material before publication.
