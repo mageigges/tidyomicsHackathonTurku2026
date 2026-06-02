@@ -18,7 +18,7 @@
 ### varm     # feature embeddings
 ### uns      # unstructured metadata
 
-### I think it might be a good idea to generate some sort of column registry 
+### generate a column registry first 
 ### which provides information where a column name from a call to select() can be found within an AnnData object
 
 
